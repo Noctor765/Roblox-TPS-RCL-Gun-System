@@ -1,0 +1,29 @@
+-- PLEASE NOTE THIS IS PLACED UNDER SERVERSCRIPTSERVICE AND IS A SCRIPT
+
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+const Event1: RemoteEvent = ReplicatedStorage:WaitForChild("GunSystem"):WaitForChild("RemoteEvents"):WaitForChild("Draw&Damage")
+const Event2: RemoteEvent = ReplicatedStorage.GunSystem.RemoteEvents:WaitForChild("Weld")
+
+
+Event1.OnServerEvent:Connect(function(plr: Player, buf: buffer, isHit: boolean, dmg: number?, human: Humanoid?)
+	if isHit then
+		Event1:FireAllClients(plr, buf)
+		human:TakeDamage(dmg)
+	else
+		Event1:FireAllClients(plr, buf)
+	end
+end)
+
+Event2.OnServerEvent:Connect(function(plr: Player, handle: Part, rightarm: BasePart)
+	handle:SetAttribute("firstCFrame", true)
+	
+	handle.Anchored = true
+	handle.CFrame = rightarm.CFrame * CFrame.new(0, -1, 0)
+	handle.Anchored = false
+	
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = rightarm
+	weld.Part1 = handle
+	weld.Parent = handle
+end)
