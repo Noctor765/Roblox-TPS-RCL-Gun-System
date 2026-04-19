@@ -1,0 +1,536 @@
+-- PLEASE NOTE THAT THIS IS A LOCALSCRIPT UNDER STARTPLAYER->STARTERPLAYERSCRIPTS
+
+const Players = game:GetService("Players")
+const TweenService = game:GetService("TweenService")
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const UserInputService = game:GetService("UserInputService")
+
+const BulletInfo: TweenInfo = TweenInfo.new(0.03, Enum.EasingStyle.Linear, Enum.EasingDirection.In)
+const BulletHolder = workspace:WaitForChild("Bullets") :: Folder
+
+local Insert = table.insert
+local Remove = table.remove
+local Clear = table.clear
+local Create = buffer.create
+local WriteF32 = buffer.writef32
+local ReadF32 = buffer.readf32
+local Clamp = math.clamp
+local Min = math.min
+local Rad = math.rad
+local random = math.random
+local Rando = Random.new()
+
+const Event1: RemoteEvent = ReplicatedStorage:WaitForChild("GunSystem"):WaitForChild("RemoteEvents"):WaitForChild("Draw&Damage")
+const Event2: RemoteEvent = ReplicatedStorage.GunSystem.RemoteEvents:WaitForChild("Weld")
+
+local UISConnections: { RBXScriptConnection } = {}
+
+local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.CharacterAdded:Wait()
+local PlayerGui = LocalPlayer.PlayerGui
+local AmmoGUI = PlayerGui:WaitForChild("AmmoGUI") :: ScreenGui
+local Ammo = AmmoGUI:WaitForChild("Frame"):WaitForChild("Ammo")
+
+local Mouse = LocalPlayer:GetMouse()
+local EquippedIcon = "rbxassetid://131581677"
+local ReloadingIcon = "rbxassetid://17067243603"
+
+local function safeFindFirstChild(parent: Instance?, name: string, class: string): (Instance?)
+	if not parent then warn("Parent not found. |", "Name of desired instance: ", name, "| ClassName of desired instance: ", class) return end
+	
+	for i, v in parent:GetChildren() do
+		if v.Name == name and v.ClassName == class then
+			return v
+		end
+	end
+	return nil
+end
+
+local function drawBullet(startpos: Vector3, endpos: Vector3)
+	local bullet = Instance.new("Part")
+	bullet.Parent = BulletHolder
+	bullet.Anchored = true
+	bullet.Size = Vector3.new(0.2, 0.2, 0.4)
+	bullet.CanCollide = false
+	bullet.CanTouch = false
+	bullet.CanQuery = false
+	bullet.CastShadow = false
+	bullet.Color = Color3.fromRGB(255, 255, 0)
+	bullet.Material = Enum.Material.Neon
+	bullet.Position = startpos
+	bullet.CFrame = CFrame.new(startpos, endpos)
+	TweenService:Create(bullet, BulletInfo, { Position = endpos }):Play()
+	task.delay(0.03, function()
+		bullet:Destroy()
+		bullet = nil
+	end)
+end
+
+local function sendBulletData(startpos: Vector3, endpos: Vector3, isHit: boolean, dmg: number?, human: Humanoid?)
+	local buf = Create(24)
+	WriteF32(buf, 0, startpos.X)
+	WriteF32(buf, 4, startpos.Y)
+	WriteF32(buf, 8, startpos.Z)
+	WriteF32(buf, 12, endpos.X)
+	WriteF32(buf, 16, endpos.Y)
+	WriteF32(buf, 20, endpos.Z)
+	if isHit then
+		Event1:FireServer(buf, true, dmg, human)
+	else
+		Event1:FireServer(buf, false)
+	end
+end
+
+Event1.OnClientEvent:Connect(function(plr: Player, buf: buffer)
+	if plr == LocalPlayer then return end
+	
+	local x1 = ReadF32(buf, 0)
+	local y1 = ReadF32(buf, 4)
+	local z1 = ReadF32(buf, 8)
+	local x2 = ReadF32(buf, 12)
+	local y2 = ReadF32(buf, 16)
+	local z2 = ReadF32(buf, 20)
+	
+	local startpos, endpos = Vector3.new(x1, y1, z1), Vector3.new(x2, y2, z2)
+	drawBullet(startpos, endpos)
+end)
+
+local IgnoreList: { Instance } = { Character, BulletHolder }
+const RaycastParam = RaycastParams.new()
+RaycastParam.FilterDescendantsInstances = IgnoreList
+RaycastParam.FilterType = Enum.RaycastFilterType.Exclude
+RaycastParam.IgnoreWater = true
+
+local function RemoveValue(obj: Accessory)
+	for i, v in IgnoreList do
+		if v == obj then
+			Remove(IgnoreList, i)
+			break
+		end
+	end
+end
+
+for _, v in Players:GetPlayers() do
+	if v.Character then
+		for i, p in v.Character:GetChildren() do
+			if p:IsA("Accessory") then
+				Insert(IgnoreList, p)
+			end
+		end
+		RaycastParam.FilterDescendantsInstances = IgnoreList
+	end
+	
+	v.CharacterAdded:Connect(function(char: Model)
+		repeat task.wait() until char:FindFirstChildOfClass("Humanoid")
+		
+		for i, p in char:GetChildren() do
+			if p:IsA("Accessory") then
+				Insert(IgnoreList, p)
+			end
+		end
+		RaycastParam.FilterDescendantsInstances = IgnoreList
+	end)
+	
+	v.CharacterRemoving:Connect(function(char: Model)
+		for i, p in char:GetChildren() do
+			if p:IsA("Accessory") then
+				RemoveValue(p)
+			end
+		end
+		RaycastParam.FilterDescendantsInstances = IgnoreList
+	end)
+end
+
+Players.PlayerAdded:Connect(function(plr: Player)
+	plr.CharacterAdded:Connect(function(char: Model)
+		repeat task.wait() until char:FindFirstChildOfClass("Humanoid")
+		
+		for i, v in char:GetChildren() do
+			if v:IsA("Accessory") then
+				Insert(IgnoreList, v)
+			end
+		end
+		RaycastParam.FilterDescendantsInstances = IgnoreList
+	end)
+	
+	plr.CharacterRemoving:Connect(function(char: Model)
+		for i, v in char:GetChildren() do
+			if v:IsA("Accessory") then
+				RemoveValue(v)
+			end
+		end
+		RaycastParam.FilterDescendantsInstances = IgnoreList
+	end)
+end)
+
+local state = {
+	Equipped = false,
+	MouseDown = false,
+	Reloading = false,
+	Shooting = false
+}
+
+type GunStat = typeof(require(script.GunTemplate))
+
+type GunTypeDef = {
+	GunStats: GunStat,
+	FirePart: Part,
+	Handle: Part,
+	Tool: Tool,
+	Shot: Sound,
+	Reload: Sound
+}
+
+local GunIndex = {}
+GunIndex.__index = GunIndex
+
+export type GunObject = typeof(setmetatable({} :: GunTypeDef, GunIndex))
+
+local GunList: {GunObject} = {}
+
+local Camera = workspace.CurrentCamera
+
+function GunIndex.new(guntool: Tool): (GunObject)
+	local GunModule = guntool:WaitForChild("GunSettings") :: ModuleScript
+	local Table = require(GunModule)
+	
+	local self = setmetatable({} :: GunTypeDef, GunIndex)
+	self.GunStats = Table
+	self.Tool = guntool
+	self.Handle = safeFindFirstChild(guntool, "Handle", "Part")
+	self.FirePart = safeFindFirstChild(self.Handle, "FirePart", "Part")
+	self.Shot =  safeFindFirstChild(self.Handle, "GunShot", "Sound")
+	self.Reload = safeFindFirstChild(self.Handle, "GunReload", "Sound")
+	
+	return self
+end
+
+local function Reload(self: GunObject)
+	if not state.Equipped or state.Shooting or state.Reloading then return end
+	if Character:FindFirstChildOfClass("Humanoid").Health <= 0 then return end
+	
+	state.Reloading = true
+	self.Reload:Play()
+	Mouse.Icon = ReloadingIcon
+	task.wait(self.GunStats.ReloadSpeed)
+	self.GunStats.CurrentAmmo = self.GunStats.MaxAmmo
+	state.Reloading = false
+	if state.Equipped then
+		Mouse.Icon = EquippedIcon
+		Ammo.Text = tostring(self.GunStats.CurrentAmmo)
+	else
+		Mouse.Icon = ""
+	end
+end
+
+local function Fire(self: GunObject)
+	if not state.Equipped or state.Shooting or state.Reloading or not state.MouseDown then return end
+	if Character:FindFirstChildOfClass("Humanoid").Health <= 0 then return end
+	
+	if self.GunStats.CurrentAmmo <= 0 then
+		Reload(self)
+		return
+	end
+	
+	state.Shooting = true
+	
+	if self.GunStats.GunType == "Pistol" or self.GunStats.GunType == "AR" then
+		self.GunStats.CurrentAmmo -= 1
+		Ammo.Text = tostring(self.GunStats.CurrentAmmo)
+		local mousepos = UserInputService:GetMouseLocation()
+		local ray = Camera:ViewportPointToRay(mousepos.X, mousepos.Y)
+		
+		local raycast = workspace:Raycast(ray.Origin, ray.Direction * self.GunStats.Range, RaycastParam)
+		local Head = safeFindFirstChild(Character, "Head", "Part")
+		
+		if raycast then
+			self.Shot:Play()
+			local dist = Clamp((raycast.Position - Head.Position).Magnitude, 0, self.GunStats.Range)
+			local minspread = -0.01 * dist
+			local maxSpread = 0.01 * dist
+			
+			local endpos = Vector3.new(
+				raycast.Position.X + Rando:NextNumber(minspread, maxSpread),
+				raycast.Position.Y + Rando:NextNumber(minspread, maxSpread),
+				raycast.Position.Z + Rando:NextNumber(minspread, maxSpread)
+			)
+			
+			local dir = (endpos - Head.Position).Unit * self.GunStats.Range
+			
+			local raycast01 = workspace:Raycast(Head.Position, dir, RaycastParam)
+			
+			if raycast01 then
+				drawBullet(self.FirePart.Position, raycast01.Position)				
+				
+				if raycast01.Instance.Parent:FindFirstChildOfClass("Humanoid") then
+					local dmg
+					if raycast01.Instance.Name == "Head" then
+						dmg = self.GunStats.Damage.Head
+					elseif raycast01.Instance.Name == "Torso" or raycast01.Instance.Name == "HumanoidRootPart" then
+						dmg = self.GunStats.Damage.Torso
+					else
+						dmg = self.GunStats.Damage.Limb
+					end
+					sendBulletData(self.FirePart.Position, raycast01.Position, true, dmg, raycast01.Instance.Parent:FindFirstChildOfClass("Humanoid"))
+				else
+					sendBulletData(self.FirePart.Position, raycast01.Position, false)
+				end
+			else
+				drawBullet(self.FirePart.Position, Head.Position + dir)
+				sendBulletData(self.FirePart.Position, Head.Position + dir, false)
+			end
+		else
+			self.Shot:Play()
+			local pos = ray.Origin + ray.Direction * self.GunStats.Range
+			local dist = Clamp((pos - Head.Position).Magnitude, 0, self.GunStats.Range)
+			local minSpread = -0.01 * dist
+			local maxSpread = 0.01 * dist
+			
+			local endpos = Vector3.new(
+				pos.X + Rando:NextNumber(minSpread, maxSpread),
+				pos.Y + Rando:NextNumber(minSpread, maxSpread),
+				pos.Z + Rando:NextNumber(minSpread, maxSpread)
+			)
+			
+			local dir = (endpos - Head.Position).Unit
+			
+			local raycast01 = workspace:Raycast(Head.Position, dir, RaycastParam)
+			if raycast01 then
+				drawBullet(self.FirePart.Position, raycast01.Position)
+
+				if raycast01.Instance.Parent:FindFirstChildOfClass("Humanoid") then
+					local dmg
+
+					if raycast01.Instance.Name == "Head" then
+						dmg = self.GunStats.Damage.Head
+					elseif raycast01.Instance.Name == "Torso" or raycast01.Instance.Name == "HumanoidRootPart" then
+						dmg = self.GunStats.Damage.Torso
+					else
+						dmg = self.GunStats.Damage.Limb
+					end
+					sendBulletData(self.FirePart.Position, raycast01.Position, true, dmg, raycast01.Instance.Parent:FindFirstChildOfClass("Humanoid"))
+				else
+					sendBulletData(self.FirePart.Position, raycast01.Position, false)
+				end
+			else
+				drawBullet(self.FirePart.Position, Head.Position + dir * self.GunStats.Range)
+				sendBulletData(self.FirePart.Position, Head.Position + dir * self.GunStats.Range, false)
+			end
+		end
+	elseif self.GunStats.GunType == "Shotgun" then
+		local bullets = Min(6, self.GunStats.CurrentAmmo)
+		self.GunStats.CurrentAmmo -= bullets
+		Ammo.Text = tostring(self.GunStats.CurrentAmmo)
+		
+		local mousepos = UserInputService:GetMouseLocation()
+		local ray = Camera:ViewportPointToRay(mousepos.X, mousepos.Y)
+		
+		local raycast = workspace:Raycast(ray.Origin, ray.Direction * self.GunStats.Range, RaycastParam)
+		local Head = safeFindFirstChild(Character, "Head", "Part")
+		
+		if raycast then
+			self.Shot:Play()
+			local basedir = (raycast.Position - Head.Position).Unit
+			
+			for i=1, bullets do
+				local rx = Rad(random(-8, 8))
+				local ry = Rad(random(-8, 8))
+				local cf = CFrame.new(Vector3.new(), basedir)
+				local spreadir = (cf * CFrame.Angles(rx, ry, 0)).LookVector
+				local finaldir = spreadir * self.GunStats.Range
+				
+				local raycast01 = workspace:Raycast(Head.Position, finaldir, RaycastParam)
+				
+				if raycast01 then
+					drawBullet(self.FirePart.Position, raycast01.Position)
+					
+					if raycast01.Instance.Parent:FindFirstChildOfClass("Humanoid") then
+						local dmg
+
+						if raycast01.Instance.Name == "Head" then
+							dmg = self.GunStats.Damage.Head
+						elseif raycast01.Instance.Name == "Torso" or raycast01.Instance.Name == "HumanoidRootPart" then
+							dmg = self.GunStats.Damage.Torso
+						else
+							dmg = self.GunStats.Damage.Limb
+						end
+						sendBulletData(self.FirePart.Position, raycast01.Position, true, dmg, raycast01.Instance.Parent:FindFirstChildOfClass("Humanoid"))
+					else
+						sendBulletData(self.FirePart.Position, raycast01.Position, false)
+					end
+				else
+					drawBullet(self.FirePart.Position, Head.Position + finaldir)
+					sendBulletData(self.FirePart.Position, Head.Position + finaldir, false)
+				end
+			end
+		else
+			self.Shot:Play()
+			local pos = ray.Origin + ray.Direction * self.GunStats.Range
+			local basedir = (pos - Head.Position).Unit
+			
+			for i=1, bullets do
+				local rx = Rad(random(-8, 8))
+				local ry = Rad(random(-8, 8))
+				local cf = CFrame.new(Vector3.new(), basedir)
+				local spreadir = (cf * CFrame.Angles(rx, ry, 0)).LookVector
+				local finaldir = spreadir * self.GunStats.Range
+				
+				local raycast01 = workspace:Raycast(Head.Position, finaldir, RaycastParam)
+				
+				if raycast01 then
+					drawBullet(self.FirePart.Position, raycast01.Position)
+					
+					if raycast01.Instance.Parent:FindFirstChildOfClass("Humanoid") then
+						local dmg
+
+						if raycast01.Instance.Name == "Head" then
+							dmg = self.GunStats.Damage.Head
+						elseif raycast01.Instance.Name == "Torso" or raycast01.Instance.Name == "HumanoidRootPart" then
+							dmg = self.GunStats.Damage.Torso
+						else
+							dmg = self.GunStats.Damage.Limb
+						end
+						sendBulletData(self.FirePart.Position, raycast01.Position, true, dmg, raycast01.Instance.Parent:FindFirstChildOfClass("Humanoid"))
+					else
+						sendBulletData(self.FirePart.Position, raycast01.Position, false)
+					end
+				else
+					drawBullet(self.FirePart.Position, Head.Position + finaldir)
+					sendBulletData(self.FirePart.Position, Head.Position + finaldir, false)
+				end
+			end
+		end
+	end
+	
+	task.wait(self.GunStats.FireRate)
+	state.Shooting = false
+end
+
+local function IndexGun(obj: Tool): (boolean, GunObject?)
+	for i, v in GunList do
+		if v.Tool == obj then
+			return true, v
+		end
+	end
+	return false, nil
+end
+
+local function ReturnGunobject(obj: Tool): (GunObject)
+	for i, v in GunList do
+		if v.Tool == obj then
+			return v
+		end
+	end
+end
+
+LocalPlayer.Backpack.ChildAdded:Connect(function(child: Instance)
+	if not child:IsA("Tool") and not child:GetAttribute("Gun") then return end
+	local gunobj
+	if rawlen(GunList) == 0 then
+		gunobj = GunIndex.new(child)
+		GunList[1] = gunobj
+	else
+		local check, item = IndexGun(child)
+		
+		if check then
+			return
+		else
+			gunobj = GunIndex.new(child)
+			local len = rawlen(GunList) + 1
+			GunList[len] = gunobj
+		end
+	end
+end)
+
+for i, v in LocalPlayer.Backpack:GetChildren() do
+	if v:IsA("Tool") and v:GetAttribute("Gun") then
+		local gunobj
+		if rawlen(GunList) == 0 then
+			gunobj = GunIndex.new(v)
+			GunList[1] = gunobj
+		else
+			local check, item = IndexGun(v)
+
+			if check then
+				return
+			else
+				gunobj = GunIndex.new(v)
+				local len = rawlen(GunList) + 1
+				GunList[len] = gunobj
+			end
+		end
+	end
+end
+
+Character.ChildAdded:Connect(function(child: Instance)
+	if not child:IsA("Tool") and not child:GetAttribute("Gun") then return end
+	
+	local gunObject = ReturnGunobject(child)
+	state.Equipped = true
+	
+	if not child.Handle:GetAttribute("firstCFrame") then
+		local rarm = safeFindFirstChild(Character, "Right Arm", "Part")
+		Event2:FireServer(child.Handle, rarm)
+	end
+	
+	Mouse.Icon = EquippedIcon
+	Ammo.Text = tostring(gunObject.GunStats.CurrentAmmo)
+	AmmoGUI.Enabled = true
+	
+	UISConnections[1] = UserInputService.InputBegan:Connect(function(input: InputObject, gpe: boolean)
+		if gpe then return end
+		
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			state.MouseDown = true
+			Fire(gunObject)
+		elseif input.KeyCode == Enum.KeyCode.R then
+			Reload(gunObject)
+		end
+	end)
+	
+	UISConnections[2] = UserInputService.InputEnded:Connect(function(input: InputObject, gpe: boolean)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			state.MouseDown = false
+		end
+	end)
+end)
+
+Character.ChildRemoved:Connect(function(child: Instance)
+	if not child:IsA("Tool") and not child:GetAttribute("Gun") then return end
+	AmmoGUI.Enabled = false
+	
+	if UISConnections[1] then
+		UISConnections[1]:Disconnect()
+		UISConnections[1] = nil
+	end
+	
+	if UISConnections[2] then
+		UISConnections[2]:Disconnect()
+		UISConnections[2] = nil
+	end
+	
+	Mouse.Icon = ""
+	state.Equipped = false
+end)
+
+if LocalPlayer.Character then
+	LocalPlayer.Character:FindFirstChildOfClass("Humanoid").Died:Once(function()
+		Clear(GunList)
+	end)
+	
+	LocalPlayer.CharacterAdded:Connect(function(char: Model)
+		local hum = char:WaitForChild("Humanoid") :: Humanoid
+		
+		hum.Died:Once(function()
+			Clear(GunList)
+		end)
+	end)
+else
+	LocalPlayer.CharacterAdded:Connect(function(char: Model)
+		local hum = char:WaitForChild("Humanoid") :: Humanoid
+		
+		hum.Died:Once(function()
+			Clear(GunList)
+		end)
+	end)
+end
