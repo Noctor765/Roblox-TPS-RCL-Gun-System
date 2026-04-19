@@ -1,0 +1,15 @@
+-- PLEASE NOTE THAT THIS IS A MODULESCRIPT UNDER THE GUNCLIENT LOCALSCRIPT
+
+return {
+	Damage = {
+		Head = 0,
+		Torso = 0,
+		Limb = 0
+	},
+	Range = 0,
+	GunType = "str",
+	FireRate = 0,
+	ReloadSpeed = 0,
+	CurrentAmmo = 0,
+	MaxAmmo = 0
+}
